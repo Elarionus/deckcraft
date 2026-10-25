@@ -19,6 +19,7 @@ mod compound;
 mod extent;
 mod images;
 mod metafile;
+mod model3d;
 mod morph_path;
 mod morph_text;
 mod paint;
@@ -1134,6 +1135,10 @@ impl Renderer {
                 ctx.set_transform(m);
                 let pf = deckcraft_model::style::PictureFill { media: *media, ..Default::default() };
                 paint::picture(ctx, f.pres, &pf, Rect::new(0.0, 0.0, w, h), m, None);
+            }
+            ShapeKind::Model3d { media, poster } => {
+                ctx.set_transform(m);
+                model3d::draw(ctx, f.pres, *media, *poster, Rect::new(0.0, 0.0, w, h), m);
             }
             ShapeKind::Media(mc) => {
                 ctx.set_transform(m);

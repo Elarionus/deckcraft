@@ -8,6 +8,8 @@
 //!   colours. Animation, skinning, cameras, lights and textures are left out.
 //! - [`glb::read`] / [`glb::write`]: glTF 2.0 binary, the triangles of its default scene.
 //! - [`import`]: any of these to `.glb` bytes plus the model's bounds.
+//! - [`raster::render`]: a software z-buffer picture of a model through a [`raster::View`] (the
+//!   slide drawing and the fallback picture a `.pptx` carries for older readers).
 //!
 //! Input is hostile: every count, offset and index is checked, allocations are capped
 //! ([`MAX_TRIANGLES`], [`MAX_VERTICES`]) and recursion is bounded.
@@ -20,6 +22,7 @@ pub mod fbx;
 pub mod glb;
 mod math;
 pub mod obj;
+pub mod raster;
 pub mod stl;
 
 use std::collections::HashMap;
@@ -268,6 +271,21 @@ pub struct Imported {
     pub triangles: usize,
     /// Its extent, Y up, when its meshes could be read.
     pub bounds: Option<Bounds>,
+    /// Its width and height on screen in the default [`raster::View`], when its meshes could be
+    /// read: the proportions of the frame it is best inserted in.
+    pub view_size: Option<(f32, f32)>,
+}
+
+impl Imported {
+    fn of(format: Format, glb: Vec<u8>, scene: &Scene) -> Imported {
+        Imported {
+            format,
+            glb,
+            triangles: scene.triangle_count(),
+            bounds: scene.bounds(),
+            view_size: raster::projected_size(scene, &raster::View::default()),
+        }
+    }
 }
 
 /// Reads the 3-D model in `bytes` (named `name`) and converts it to `.glb`.
@@ -285,16 +303,16 @@ pub fn import(name: &str, bytes: &[u8], sidecar: &mut dyn FnMut(&str) -> Option<
             // reading its meshes only measures it.
             glb::check(bytes)?;
             return Ok(match glb::read(bytes) {
-                Ok(scene) => Imported { format, glb: bytes.to_vec(), triangles: scene.triangle_count(), bounds: scene.bounds() },
+                Ok(scene) => Imported::of(format, bytes.to_vec(), &scene),
                 Err(e) => {
                     log::warn!("mesh: kept {name} without measuring it: {e}");
-                    Imported { format, glb: bytes.to_vec(), triangles: 0, bounds: None }
+                    Imported { format, glb: bytes.to_vec(), triangles: 0, bounds: None, view_size: None }
                 }
             });
         }
     };
     let glb = glb::write(&scene)?;
-    Ok(Imported { format, glb, triangles: scene.triangle_count(), bounds: scene.bounds() })
+    Ok(Imported::of(format, glb, &scene))
 }
 
 /// Parses an ASCII float the way model files write them (`1`, `-0.5`, `1e-3`, `nan` refused).
