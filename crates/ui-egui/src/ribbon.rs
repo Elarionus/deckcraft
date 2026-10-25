@@ -1357,6 +1357,7 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
         });
         let r = big_button(ui, Icon::Icons, "Icons", enabled(app, "insert.icon"));
         egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(340.0).show(|ui| icon_library(app, ui));
+        big(app, ui, Icon::Models3d, "3D\nModels", "app.insertModel3dDialog", json!({}));
         big(app, ui, Icon::SmartArt, "SmartArt", "app.dialog", json!({"id": "smartart"}));
         let r = big_button(ui, Icon::Chart, "Chart", enabled(app, "insert.chart"));
         egui::Popup::menu(&r).show(|ui| {

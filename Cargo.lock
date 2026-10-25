@@ -929,6 +929,7 @@ dependencies = [
  "deckcraft-format",
  "deckcraft-geom",
  "deckcraft-media",
+ "deckcraft-mesh",
  "deckcraft-model",
  "deckcraft-pdf",
  "deckcraft-pptx",
@@ -1032,6 +1033,16 @@ dependencies = [
  "image",
  "log",
  "symphonia",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "deckcraft-mesh"
+version = "0.11.1"
+dependencies = [
+ "log",
+ "miniz_oxide 0.9.1",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 

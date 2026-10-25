@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-25 · **Change:** minor (3-D models inserted from STL, OBJ, FBX and glTF binary; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -64,7 +64,8 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | Online video (YouTube embeds) | yes | no | Cloud feature |
 | Embedded OLE objects | yes | kept on round trip (opaque), not insertable or editable | `ShapeKind::Opaque` |
 | Embedded fonts | yes | yes | `p:embeddedFontLst` read and written. TrueType, OpenType and Embedded OpenType faces are used to draw; MicroType Express subsets are kept and written back, not drawn |
-| 3-D models (`.glb`) | yes | kept | The model part round-trips (`p:contentPart`, including an `mc:AlternateContent` choice and its fallback picture). Not drawn as a mesh and not inserted from the ribbon |
+| 3-D models (`.glb`) | yes | kept, inserted | The model part round-trips (`p:contentPart`, including an `mc:AlternateContent` choice and its fallback picture). Insert ▸ 3D Models embeds one; no fallback picture is written for it yet. Not drawn as a mesh. Tests: `corpus_media.rs`, `cmd/model3d.rs` |
+| 3-D model files: `.stl`, `.obj` (+ `.mtl`), `.fbx`, `.glb` | yes (converted to `.glb`) | yes (inserted as `.glb`) | `crates/mesh`: binary and ASCII STL (Z-up turned to Y-up); OBJ faces, normals and `Kd`/`d` colours per material; FBX 6.1–7.7 binary (zlib arrays) and ASCII meshes, normals, material slots, `Lcl` transforms through parent models and Z-up files. FBX animation, skinning and textures and OBJ textures are left out; a `.glb` is embedded as it is. Tests: `crates/mesh` unit tests |
 
 ## PPTX coverage (PresentationML / DrawingML)
 
@@ -119,6 +120,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | Insert ▸ 3D Models: STL, OBJ (with MTL colours), FBX and `.glb` files are read by the new `mesh` crate and embedded as `.glb`; a new row lists what each reader takes. Dimension score unchanged until models are drawn |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native `.deckcraft` files serialize a nonempty chart `kept` sidecar (relationships, part names, content types and bytes). Older files without it still load; empty sidecars are omitted. Headless PPTX → edit → native save/reopen → PPTX checks keep the workbook and drawing bytes; editing chart data still drops the stale workbook |
 | 2026-10-15 | trivial | PPTX interactive timing sequences keep later On Click steps and paragraph click builds (`trigger_steps.rs`); mixed starts and independent buttons survive import/edit/save/reopen |
