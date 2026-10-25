@@ -15,27 +15,103 @@ pub const MAX_SIDE: u32 = 4096;
 /// Space left around the model, as a fraction of the canvas on each side.
 const MARGIN: f32 = 0.02;
 
-/// How the model is turned in front of the camera.
+/// Where the camera stands, which way is up and where it looks (any units: only directions count,
+/// since the projection is orthographic and the model is fitted to the canvas).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct View {
-    /// Degrees about the vertical axis, turning the model's right side towards the viewer.
-    pub yaw: f32,
-    /// Degrees about the horizontal axis, tipping the model's top towards the viewer.
-    pub pitch: f32,
+pub struct Camera {
+    pub pos: [f64; 3],
+    pub up: [f64; 3],
+    pub look_at: [f64; 3],
 }
 
-impl Default for View {
-    /// A three-quarter view from slightly above, so a box shows three faces.
-    fn default() -> Self {
-        View { yaw: -30.0, pitch: 20.0 }
+impl Camera {
+    /// World to view space: the view looks down −Z with +Y up. `None` when the camera has no
+    /// direction or its up is along it.
+    fn matrix(&self) -> Option<Mat4> {
+        let f = sub64(self.look_at, self.pos);
+        let f = unit64(f)?;
+        let r = unit64(cross64(f, self.up))?;
+        let u = cross64(r, f);
+        // Rows: right, up, back (−forward).
+        Some(Mat4([r[0], u[0], -f[0], 0.0, r[1], u[1], -f[1], 0.0, r[2], u[2], -f[2], 0.0, 0.0, 0.0, 0.0, 1.0]))
     }
 }
+
+fn sub64(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn cross64(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+fn unit64(v: [f64; 3]) -> Option<[f64; 3]> {
+    let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    (l.is_finite() && l > 1e-12).then(|| [v[0] / l, v[1] / l, v[2] / l])
+}
+
+/// How the model is turned and seen: `rot` degrees about X, then Y, then Z (as `am3d:rot`), seen
+/// by `camera` (`None`: from the front, on +Z, upright).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct View {
+    pub rot: [f64; 3],
+    pub camera: Option<Camera>,
+}
+
+/// How far a drag turns a model: degrees per point moved.
+pub const DEGREES_PER_POINT: f64 = 0.5;
 
 impl View {
-    fn matrix(&self) -> Mat4 {
-        let finite = |v: f32| if v.is_finite() { v as f64 } else { 0.0 };
-        Mat4::axis_rotation(0, finite(self.pitch)).mul(&Mat4::axis_rotation(1, finite(self.yaw)))
+    /// The model turned `yaw` degrees about the vertical (its right side towards the viewer for a
+    /// negative yaw), then tipped `pitch` degrees towards the viewer about the horizontal, seen from
+    /// the front.
+    pub fn from_yaw_pitch(yaw: f64, pitch: f64) -> View {
+        // A turn about one axis keeps its own angle (Back is 180° about Y, not 180° about X and Z).
+        let rot = if pitch == 0.0 {
+            [0.0, yaw, 0.0]
+        } else if yaw == 0.0 {
+            [pitch, 0.0, 0.0]
+        } else {
+            Mat4::axis_rotation(0, pitch).mul(&Mat4::axis_rotation(1, yaw)).euler_xyz_angles()
+        };
+        View { rot: wrap(rot), camera: None }
     }
+
+    /// The view a newly inserted model gets: three-quarter from slightly above, so a box shows
+    /// three faces.
+    pub fn inserted() -> View {
+        View::from_yaw_pitch(-30.0, 20.0)
+    }
+
+    fn camera_matrix(&self) -> Mat4 {
+        self.camera.and_then(|c| c.matrix()).filter(Mat4::is_finite).unwrap_or(Mat4::IDENTITY)
+    }
+
+    fn matrix(&self) -> Mat4 {
+        let finite = |v: f64| if v.is_finite() { v } else { 0.0 };
+        self.camera_matrix().mul(&Mat4::euler_xyz([finite(self.rot[0]), finite(self.rot[1]), finite(self.rot[2])]))
+    }
+
+    /// This view after a drag of `dx`, `dy` points on screen: the model turns about the screen's
+    /// vertical by `dx` and its horizontal by `dy` ([`DEGREES_PER_POINT`] each), so its front
+    /// follows the pointer. The camera stays; the turn is put into `rot`.
+    pub fn turned(&self, dx: f64, dy: f64) -> View {
+        let (dx, dy) = (if dx.is_finite() { dx } else { 0.0 }, if dy.is_finite() { dy } else { 0.0 });
+        let screen = Mat4::axis_rotation(1, dx * DEGREES_PER_POINT).mul(&Mat4::axis_rotation(0, dy * DEGREES_PER_POINT));
+        let cam = self.camera_matrix();
+        let model = Mat4::euler_xyz(self.rot);
+        // camera · new = screen · camera · old, so new = cameraᵀ · screen · camera · old.
+        let new = cam.transpose3().mul(&screen).mul(&cam).mul(&model);
+        View { rot: wrap(new.euler_xyz_angles()), camera: self.camera }
+    }
+}
+
+/// Angles in [0, 360).
+fn wrap(r: [f64; 3]) -> [f64; 3] {
+    r.map(|a| {
+        let w = if a.is_finite() { a.rem_euclid(360.0) } else { 0.0 };
+        if (360.0 - w).abs() < 1e-9 { 0.0 } else { w }
+    })
 }
 
 /// Straight-alpha sRGB pixels, row by row from the top.
@@ -265,7 +341,7 @@ mod tests {
 
     #[test]
     fn a_cube_fills_the_middle_and_leaves_the_corners_clear() {
-        let img = render(&cube(), &View::default(), 120, 120).expect("render");
+        let img = render(&cube(), &View::inserted(), 120, 120).expect("render");
         assert_eq!(img.rgba.len(), 120 * 120 * 4);
         assert_eq!(at(&img, 60, 60)[3], 255, "the middle is the cube");
         assert_eq!(at(&img, 1, 1)[3], 0, "a three-quarter view leaves the corners empty");
@@ -278,13 +354,13 @@ mod tests {
 
     #[test]
     fn a_front_view_is_a_flat_square() {
-        let img = render(&cube(), &View { yaw: 0.0, pitch: 0.0 }, 100, 50).expect("render");
+        let img = render(&cube(), &View::default(), 100, 50).expect("render");
         // Fitted to the height, centred: a 48 px square in the middle.
         assert_eq!(at(&img, 50, 25)[3], 255);
         assert_eq!(at(&img, 10, 25)[3], 0);
         let c = at(&img, 50, 25);
         assert!((0..100).filter(|&x| at(&img, x, 25) == c).count() >= 44, "one flat shade across the face");
-        let (w, h) = projected_size(&cube(), &View { yaw: 0.0, pitch: 0.0 }).expect("size");
+        let (w, h) = projected_size(&cube(), &View::default()).expect("size");
         assert!((w - 1.0).abs() < 1e-5 && (h - 1.0).abs() < 1e-5);
     }
 
@@ -298,7 +374,7 @@ mod tests {
             indices: vec![0, 1, 2, 0, 2, 3],
             color,
         };
-        let front = View { yaw: 0.0, pitch: 0.0 };
+        let front = View::default();
         for order in [[0, 1], [1, 0]] {
             let prims = [sq(1.0, [1.0, 0.0, 0.0, 1.0]), sq(0.0, [0.0, 0.0, 1.0, 1.0])];
             let scene = Scene { primitives: order.iter().map(|&i| prims[i].clone()).collect() };
@@ -317,6 +393,42 @@ mod tests {
         assert!(render(&point, &View::default(), 10, 10).is_none());
         assert!(render(&cube(), &View::default(), 0, 10).is_none());
         assert!(render(&cube(), &View::default(), MAX_SIDE + 1, 10).is_none());
-        assert!(render(&cube(), &View { yaw: f32::NAN, pitch: f32::INFINITY }, 10, 10).is_some());
+        assert!(render(&cube(), &View { rot: [f64::NAN, f64::INFINITY, 0.0], camera: None }, 10, 10).is_some());
+        let flat = Camera { pos: [0.0; 3], up: [0.0, 1.0, 0.0], look_at: [0.0; 3] };
+        assert!(render(&cube(), &View { rot: [0.0; 3], camera: Some(flat) }, 10, 10).is_some(), "a camera with no direction falls back to the front");
+    }
+
+    fn close(a: [f64; 3], b: [f64; 3]) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
+    }
+
+    #[test]
+    fn yaw_and_pitch_become_xyz_angles_that_draw_the_same() {
+        let v = View::inserted();
+        // Rx(20)·Ry(−30) written as Rz·Ry·Rx angles reproduces the same turn.
+        let direct = Mat4::axis_rotation(0, 20.0).mul(&Mat4::axis_rotation(1, -30.0));
+        let back = Mat4::euler_xyz(v.rot);
+        assert!(direct.0.iter().zip(back.0).all(|(a, b)| (a - b).abs() < 1e-7), "{:?}", v.rot);
+        assert!(close(View::from_yaw_pitch(0.0, 0.0).rot, [0.0; 3]));
+        assert!(close(View::from_yaw_pitch(90.0, 0.0).rot, [0.0, 90.0, 0.0]));
+        assert!(close(View::from_yaw_pitch(0.0, 90.0).rot, [90.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn a_drag_turns_the_front_towards_the_pointer() {
+        let front = View::default();
+        // Dragging 180 pt right is a 90° turn: the model's left side (−X) now faces the camera.
+        let v = front.turned(180.0, 0.0);
+        assert!(close(v.rot, [0.0, 90.0, 0.0]), "{:?}", v.rot);
+        // Dragging down turns the front (+Z) down the screen.
+        let v = front.turned(0.0, 180.0);
+        let z = Mat4::euler_xyz(v.rot).point([0.0, 0.0, 1.0]);
+        assert!((z[1] + 1.0).abs() < 1e-5, "{z:?}");
+        // With a camera above the model, a sideways drag still turns about the screen's vertical.
+        let above = View { rot: [0.0; 3], camera: Some(Camera { pos: [0.0, 10.0, 0.0], up: [0.0, 0.0, -1.0], look_at: [0.0; 3] }) };
+        let v = above.turned(180.0, 0.0);
+        // Right on screen is world +X here, so the model's −X (on the left) comes round to face it.
+        let seen = v.matrix().point([-1.0, 0.0, 0.0]);
+        assert!((seen[2] - 1.0).abs() < 1e-5, "−X now faces the camera: {seen:?}");
     }
 }

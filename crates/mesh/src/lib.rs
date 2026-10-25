@@ -271,7 +271,7 @@ pub struct Imported {
     pub triangles: usize,
     /// Its extent, Y up, when its meshes could be read.
     pub bounds: Option<Bounds>,
-    /// Its width and height on screen in the default [`raster::View`], when its meshes could be
+    /// Its width and height on screen in [`raster::View::inserted`], when its meshes could be
     /// read: the proportions of the frame it is best inserted in.
     pub view_size: Option<(f32, f32)>,
 }
@@ -283,7 +283,7 @@ impl Imported {
             glb,
             triangles: scene.triangle_count(),
             bounds: scene.bounds(),
-            view_size: raster::projected_size(scene, &raster::View::default()),
+            view_size: raster::projected_size(scene, &raster::View::inserted()),
         }
     }
 }

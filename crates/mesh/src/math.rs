@@ -92,6 +92,34 @@ impl Mat4 {
         Mat4::axis_rotation(2, r[2]).mul(&Mat4::axis_rotation(1, r[1])).mul(&Mat4::axis_rotation(0, r[0]))
     }
 
+    /// The upper 3 × 3 block transposed (the inverse of a rotation).
+    pub fn transpose3(&self) -> Mat4 {
+        let mut m = Mat4::IDENTITY;
+        for r in 0..3 {
+            for c in 0..3 {
+                if let Some(slot) = m.0.get_mut(c * 4 + r) {
+                    *slot = self.at(c, r);
+                }
+            }
+        }
+        m
+    }
+
+    /// The angles (degrees) `[x, y, z]` with [`Mat4::euler_xyz`] of them equal to this rotation.
+    /// At ±90° about Y the X and Z turns share an axis; Z is then taken as 0.
+    pub fn euler_xyz_angles(&self) -> [f64; 3] {
+        let a = |r, c| self.at(r, c);
+        let sy = (-a(2, 0)).clamp(-1.0, 1.0);
+        let y = sy.asin();
+        let (x, z) = if y.cos().abs() > 1e-9 { (a(2, 1).atan2(a(2, 2)), a(1, 0).atan2(a(0, 0))) } else { ((-a(1, 2)).atan2(a(1, 1)), 0.0) };
+        let tidy = |v: f64| {
+            let d = v.to_degrees();
+            let r = (d * 1e6).round() / 1e6;
+            if r == 0.0 { 0.0 } else { r }
+        };
+        [tidy(x), tidy(y), tidy(z)]
+    }
+
     pub fn point(&self, p: [f32; 3]) -> [f32; 3] {
         let [x, y, z] = [p[0] as f64, p[1] as f64, p[2] as f64];
         let r = |row| (self.at(row, 0) * x + self.at(row, 1) * y + self.at(row, 2) * z + self.at(row, 3)) as f32;

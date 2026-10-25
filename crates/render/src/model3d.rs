@@ -1,5 +1,5 @@
 //! 3-D models (`ShapeKind::Model3d`): the embedded `.glb` read once and drawn by
-//! [`deckcraft_mesh::raster`] in its default view, fitted inside the frame with its proportions
+//! [`deckcraft_mesh::raster`] in the model's pose, fitted inside the frame with its proportions
 //! kept, as PowerPoint draws a model. Pictures are made at quarter-octave sizes and cached like
 //! decoded pictures, so zooming and redraws don't rasterize again. A model that can't be read
 //! shows its fallback picture (the poster an `mc:AlternateContent` carried), else a grey box.
@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use deckcraft_mesh::Scene;
-use deckcraft_mesh::raster::{self, View};
-use deckcraft_model::{MediaId, Presentation};
+use deckcraft_mesh::raster::{self, Camera, View};
+use deckcraft_model::{MediaId, Model3dPose, Presentation};
 use kurbo::{Affine, Rect};
 use vello_cpu::{Pixmap, RenderContext, peniko};
 
@@ -36,7 +36,7 @@ struct PictureEntry {
 struct Cache {
     scenes: HashMap<usize, SceneEntry>,
     vertices: usize,
-    pictures: HashMap<(usize, u32, u32), PictureEntry>,
+    pictures: HashMap<(usize, u32, u32, u64), PictureEntry>,
     bytes: usize,
     clock: u64,
 }
@@ -87,6 +87,26 @@ pub(crate) fn scene(bytes: &Arc<Vec<u8>>) -> Option<Arc<Scene>> {
     scene
 }
 
+/// The view a model's pose describes (the camera's directions only; positions in any unit).
+pub fn view_of(pose: &Model3dPose) -> View {
+    let v = |a: [i64; 3]| [a[0] as f64, a[1] as f64, a[2] as f64];
+    View { rot: pose.rot, camera: pose.camera.as_ref().map(|c| Camera { pos: v(c.pos), up: v(c.up), look_at: v(c.look_at) }) }
+}
+
+fn view_key(view: &View) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    for v in view.rot {
+        v.to_bits().hash(&mut h);
+    }
+    if let Some(c) = view.camera {
+        for v in c.pos.iter().chain(&c.up).chain(&c.look_at) {
+            v.to_bits().hash(&mut h);
+        }
+    }
+    h.finish()
+}
+
 /// The largest box of `aspect` (width / height) inside `b`, centred.
 fn fit(b: Rect, aspect: f64) -> Rect {
     let (w, h) = (b.width(), b.height());
@@ -101,7 +121,7 @@ fn aspect(scene: &Scene, view: &View) -> f64 {
 
 /// The picture of `scene` `iw` × `ih` px, cached for the media bytes it came from.
 fn picture(bytes: &Arc<Vec<u8>>, scene: &Scene, view: &View, iw: u32, ih: u32) -> Option<Arc<Pixmap>> {
-    let key = (Arc::as_ptr(bytes) as usize, iw, ih);
+    let key = (Arc::as_ptr(bytes) as usize, iw, ih, view_key(view));
     let hit = with(|c| {
         c.clock += 1;
         let clock = c.clock;
@@ -147,9 +167,17 @@ fn bucket(want: f64) -> f64 {
     (2f64.powf((want.log2() * 4.0).ceil() / 4.0)).min(MAX_SIDE).round()
 }
 
-/// Draws the model `media` (with its fallback picture `poster`) over `bounds` in shape space,
-/// `m` being the shape-to-device transform.
-pub(crate) fn draw(ctx: &mut RenderContext, pres: &Presentation, media: MediaId, poster: Option<MediaId>, bounds: Rect, m: Affine) {
+/// Draws the model `media` in `pose` (or its fallback picture `poster`) over `bounds` in shape
+/// space, `m` being the shape-to-device transform.
+pub(crate) fn draw(
+    ctx: &mut RenderContext,
+    pres: &Presentation,
+    media: MediaId,
+    poster: Option<MediaId>,
+    pose: &Model3dPose,
+    bounds: Rect,
+    m: Affine,
+) {
     let item = pres.media(media);
     let found = item.and_then(|item| scene(&item.data).map(|s| (item.data.clone(), s)));
     let Some((bytes, scene)) = found else {
@@ -162,7 +190,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, pres: &Presentation, media: MediaId,
         }
         return;
     };
-    let view = View::default();
+    let view = view_of(pose);
     let a = aspect(&scene, &view);
     let dest = fit(bounds, a);
     let side = bucket(dest.width().max(dest.height()) * crate::scale_of(m));
@@ -228,7 +256,7 @@ mod tests {
         let shape = Shape {
             id: ShapeId(900),
             xfrm: Some(Xfrm::new(100.0, 100.0, 300.0, 200.0)),
-            kind: ShapeKind::Model3d { media, poster },
+            kind: ShapeKind::Model3d { media, poster, pose: Default::default() },
             ..Default::default()
         };
         std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![shape];

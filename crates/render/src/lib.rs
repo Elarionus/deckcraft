@@ -52,6 +52,7 @@ use vello_cpu::{RenderContext, Resources, peniko};
 pub use deckcraft_anim::{transition_frame, transition_layers, uses_slide_parts};
 pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
 pub use images::{decode as decode_image, gif_frame};
+pub use model3d::view_of as model3d_view;
 pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
 pub use pattern::{is_fg as pattern_is_fg, presets as pattern_presets, tile as pattern_tile};
@@ -1136,9 +1137,9 @@ impl Renderer {
                 let pf = deckcraft_model::style::PictureFill { media: *media, ..Default::default() };
                 paint::picture(ctx, f.pres, &pf, Rect::new(0.0, 0.0, w, h), m, None);
             }
-            ShapeKind::Model3d { media, poster } => {
+            ShapeKind::Model3d { media, poster, pose } => {
                 ctx.set_transform(m);
-                model3d::draw(ctx, f.pres, *media, *poster, Rect::new(0.0, 0.0, w, h), m);
+                model3d::draw(ctx, f.pres, *media, *poster, pose, Rect::new(0.0, 0.0, w, h), m);
             }
             ShapeKind::Media(mc) => {
                 ctx.set_transform(m);
